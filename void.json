@@ -1,0 +1,15 @@
+{
+  "name": "void-ffmpeg",
+  "version": "1.0.0",
+  "type": "cpp",
+  "buildDir": "@void/void-ffmpeg",
+  "types": "types.d.ts",
+  "export": "ffmpeg",
+  "dependencies": {
+    "@tgrv/void-sdk-cpp": "^1.0.0"
+  },
+  "files": [
+    "*.d.ts",
+    "*.md"  
+  ]
+}
