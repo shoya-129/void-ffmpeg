@@ -5,6 +5,6 @@
   "dependencies": {
     "@voidwasm/math": "latest",
     "@voidwasm/runtime": "latest",
-    "@voidwasm/ffmpeg": "^1.0.0"
+    "@voidwasm/ffmpeg": "^1.0.1"
   }
 }

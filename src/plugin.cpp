@@ -74,6 +74,7 @@ extern "C" {
 #include <libswscale/swscale.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/opt.h>
+#include <libavutil/pixdesc.h>
 }
 
 using json = nlohmann::json;
@@ -101,8 +102,21 @@ struct VideoState {
     double trim_start = 0.0;
     double trim_end = 0.0;
     
-    // Target format target extension (e.g. mp4, mkv)
+    // Target format / extension
     std::string target_format = "";
+    
+    // Codec and encoding settings
+    std::string video_codec = "";
+    std::string audio_codec = "";
+    std::string pixel_format = "";
+    std::string preset = "";
+    std::string filter_graph = "";
+    int64_t video_bitrate = 0;
+    int64_t audio_bitrate = 0;
+    int sample_rate = 0;
+    double frame_rate = 0.0;
+    bool stream_copy = false;
+    std::map<std::string, std::string> metadata;
 };
 
 static std::map<std::string, VideoState> g_videos;
@@ -112,6 +126,32 @@ std::string generate_handle() {
     std::stringstream ss;
     ss << "video_" << g_next_handle_id++;
     return ss.str();
+}
+
+int64_t parse_bitrate_arg(const void_sdk::ArgsMap& args, const std::string& key) {
+    if (args.count(key) == 0) return 0;
+    auto val = args.at(key);
+    if (val.is_number()) {
+        return val.get<int64_t>();
+    } else if (val.is_string()) {
+        std::string str = val.get<std::string>();
+        if (str.empty()) return 0;
+        char suffix = str.back();
+        int64_t multiplier = 1;
+        if (suffix == 'k' || suffix == 'K') {
+            multiplier = 1000;
+            str.pop_back();
+        } else if (suffix == 'm' || suffix == 'M') {
+            multiplier = 1000000;
+            str.pop_back();
+        }
+        try {
+            return std::stoll(str) * multiplier;
+        } catch (...) {
+            return 0;
+        }
+    }
+    return 0;
 }
 
 // 1. open(path)
@@ -128,25 +168,64 @@ json plugin_open(const void_sdk::ArgsMap& args) {
     }
     
     int video_stream_idx = -1;
-    AVCodecParameters* codec_par = nullptr;
+    int audio_stream_idx = -1;
+    AVCodecParameters* video_codecpar = nullptr;
+    AVCodecParameters* audio_codecpar = nullptr;
+    AVStream* video_stream = nullptr;
+    AVStream* audio_stream = nullptr;
+    
     for (unsigned int i = 0; i < format_ctx->nb_streams; i++) {
-        if (format_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+        if (format_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && video_stream_idx == -1) {
             video_stream_idx = i;
-            codec_par = format_ctx->streams[i]->codecpar;
-            break;
+            video_stream = format_ctx->streams[i];
+            video_codecpar = format_ctx->streams[i]->codecpar;
+        } else if (format_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO && audio_stream_idx == -1) {
+            audio_stream_idx = i;
+            audio_stream = format_ctx->streams[i];
+            audio_codecpar = format_ctx->streams[i]->codecpar;
         }
     }
     
-    if (video_stream_idx == -1) {
+    if (video_stream_idx == -1 && audio_stream_idx == -1) {
         avformat_close_input(&format_ctx);
-        throw std::runtime_error("No video stream found in: " + path);
+        throw std::runtime_error("No video or audio stream found in: " + path);
     }
     
-    int width = codec_par->width;
-    int height = codec_par->height;
+    int width = video_codecpar ? video_codecpar->width : 0;
+    int height = video_codecpar ? video_codecpar->height : 0;
+    
     double duration = 0.0;
     if (format_ctx->duration != AV_NOPTS_VALUE) {
         duration = (double)format_ctx->duration / AV_TIME_BASE;
+    }
+    
+    double fps = 0.0;
+    if (video_stream) {
+        AVRational r_fps = av_guess_frame_rate(format_ctx, video_stream, nullptr);
+        if (r_fps.den > 0) {
+            fps = av_q2d(r_fps);
+        }
+    }
+    
+    int64_t bitrate = format_ctx->bit_rate > 0 ? format_ctx->bit_rate : 0;
+    std::string format_name = format_ctx->iformat && format_ctx->iformat->name ? format_ctx->iformat->name : "";
+    
+    bool has_video = (video_stream_idx != -1);
+    bool has_audio = (audio_stream_idx != -1);
+    
+    std::string video_codec = video_codecpar ? avcodec_get_name(video_codecpar->codec_id) : "";
+    std::string audio_codec = audio_codecpar ? avcodec_get_name(audio_codecpar->codec_id) : "";
+    
+    std::string pixel_format = "";
+    if (video_codecpar && video_codecpar->format != AV_PIX_FMT_NONE) {
+        const char* pix_name = av_get_pix_fmt_name((AVPixelFormat)video_codecpar->format);
+        if (pix_name) pixel_format = pix_name;
+    }
+    
+    int sample_rate = audio_codecpar ? audio_codecpar->sample_rate : 0;
+    int channels = 0;
+    if (audio_codecpar) {
+        channels = audio_codecpar->ch_layout.nb_channels;
     }
     
     avformat_close_input(&format_ctx);
@@ -162,9 +241,19 @@ json plugin_open(const void_sdk::ArgsMap& args) {
     
     return json{
         {"handle", handle},
+        {"duration", duration},
         {"width", width},
         {"height", height},
-        {"duration", duration}
+        {"fps", fps},
+        {"bitrate", bitrate},
+        {"format", format_name},
+        {"hasVideo", has_video},
+        {"hasAudio", has_audio},
+        {"videoCodec", video_codec},
+        {"audioCodec", audio_codec},
+        {"pixelFormat", pixel_format},
+        {"sampleRate", sample_rate},
+        {"channels", channels}
     };
 }
 
@@ -349,8 +438,7 @@ json merge(const void_sdk::ArgsMap& args) {
         throw std::runtime_error("Invalid video handle: " + handle);
     }
     
-    it->second.target_format = "merge"; // flag that we are doing merge
-    it->second.has_resize = false; // reset crop/resize/trim for merge
+    it->second.has_resize = false;
     it->second.has_crop = false;
     it->second.has_trim = false;
     it->second.target_format = "merge:" + other_path;
@@ -447,7 +535,7 @@ json thumbnail(const void_sdk::ArgsMap& args) {
         throw std::runtime_error("Could not decode frame at target time");
     }
     
-    // Encode as JPEG using the native mjpeg encoder
+    // Encode as JPEG
     const AVCodec* encoder = avcodec_find_encoder(AV_CODEC_ID_MJPEG);
     if (!encoder) {
         av_packet_free(&pkt);
@@ -508,44 +596,161 @@ json thumbnail(const void_sdk::ArgsMap& args) {
     return json{{"success", true}};
 }
 
-// Helper: direct concatenate
-void merge_impl(const std::string& first_path, const std::string& second_path, const std::string& output_path) {
-    std::vector<std::string> inputs = {first_path, second_path};
+// 9. videoCodec(handle, codec)
+json videoCodec(const void_sdk::ArgsMap& args) {
+    std::string handle = void_sdk::get_string(args, "handle");
+    std::string codec = void_sdk::get_string(args, "codec");
+    auto it = g_videos.find(handle);
+    if (it == g_videos.end()) throw std::runtime_error("Invalid video handle: " + handle);
+    it->second.video_codec = codec;
+    return json{{"success", true}};
+}
+
+// 10. audioCodec(handle, codec)
+json audioCodec(const void_sdk::ArgsMap& args) {
+    std::string handle = void_sdk::get_string(args, "handle");
+    std::string codec = void_sdk::get_string(args, "codec");
+    auto it = g_videos.find(handle);
+    if (it == g_videos.end()) throw std::runtime_error("Invalid video handle: " + handle);
+    it->second.audio_codec = codec;
+    return json{{"success", true}};
+}
+
+// 11. pixelFormat(handle, format)
+json pixelFormat(const void_sdk::ArgsMap& args) {
+    std::string handle = void_sdk::get_string(args, "handle");
+    std::string format = void_sdk::get_string(args, "format");
+    auto it = g_videos.find(handle);
+    if (it == g_videos.end()) throw std::runtime_error("Invalid video handle: " + handle);
+    it->second.pixel_format = format;
+    return json{{"success", true}};
+}
+
+// 12. preset(handle, preset)
+json preset(const void_sdk::ArgsMap& args) {
+    std::string handle = void_sdk::get_string(args, "handle");
+    std::string preset_val = void_sdk::get_string(args, "preset");
+    auto it = g_videos.find(handle);
+    if (it == g_videos.end()) throw std::runtime_error("Invalid video handle: " + handle);
+    it->second.preset = preset_val;
+    return json{{"success", true}};
+}
+
+// 13. filter(handle, graph)
+json filter_api(const void_sdk::ArgsMap& args) {
+    std::string handle = void_sdk::get_string(args, "handle");
+    std::string graph = void_sdk::get_string(args, "graph");
+    auto it = g_videos.find(handle);
+    if (it == g_videos.end()) throw std::runtime_error("Invalid video handle: " + handle);
+    it->second.filter_graph = graph;
+    return json{{"success", true}};
+}
+
+// 14. videoBitrate(handle, bitrate)
+json videoBitrate(const void_sdk::ArgsMap& args) {
+    std::string handle = void_sdk::get_string(args, "handle");
+    int64_t bitrate = parse_bitrate_arg(args, "bitrate");
+    auto it = g_videos.find(handle);
+    if (it == g_videos.end()) throw std::runtime_error("Invalid video handle: " + handle);
+    it->second.video_bitrate = bitrate;
+    return json{{"success", true}};
+}
+
+// 15. audioBitrate(handle, bitrate)
+json audioBitrate(const void_sdk::ArgsMap& args) {
+    std::string handle = void_sdk::get_string(args, "handle");
+    int64_t bitrate = parse_bitrate_arg(args, "bitrate");
+    auto it = g_videos.find(handle);
+    if (it == g_videos.end()) throw std::runtime_error("Invalid video handle: " + handle);
+    it->second.audio_bitrate = bitrate;
+    return json{{"success", true}};
+}
+
+// 16. sampleRate(handle, rate)
+json sampleRate(const void_sdk::ArgsMap& args) {
+    std::string handle = void_sdk::get_string(args, "handle");
+    int rate = (int)void_sdk::get_int(args, "rate");
+    auto it = g_videos.find(handle);
+    if (it == g_videos.end()) throw std::runtime_error("Invalid video handle: " + handle);
+    it->second.sample_rate = rate;
+    return json{{"success", true}};
+}
+
+// 17. frameRate(handle, fps)
+json frameRate(const void_sdk::ArgsMap& args) {
+    std::string handle = void_sdk::get_string(args, "handle");
+    double fps = void_sdk::get_float(args, "fps");
+    auto it = g_videos.find(handle);
+    if (it == g_videos.end()) throw std::runtime_error("Invalid video handle: " + handle);
+    it->second.frame_rate = fps;
+    return json{{"success", true}};
+}
+
+// 18. streamCopy(handle)
+json streamCopy(const void_sdk::ArgsMap& args) {
+    std::string handle = void_sdk::get_string(args, "handle");
+    auto it = g_videos.find(handle);
+    if (it == g_videos.end()) throw std::runtime_error("Invalid video handle: " + handle);
+    it->second.stream_copy = true;
+    return json{{"success", true}};
+}
+
+// 19. metadata(handle, ...)
+json metadata(const void_sdk::ArgsMap& args) {
+    std::string handle = void_sdk::get_string(args, "handle");
+    auto it = g_videos.find(handle);
+    if (it == g_videos.end()) throw std::runtime_error("Invalid video handle: " + handle);
+    for (auto& [k, v] : args) {
+        if (k != "handle" && v.is_string()) {
+            it->second.metadata[k] = v.get<std::string>();
+        }
+    }
+    return json{{"success", true}};
+}
+
+// 20. outputFormat(handle, format)
+json outputFormat(const void_sdk::ArgsMap& args) {
+    std::string handle = void_sdk::get_string(args, "handle");
+    std::string format = void_sdk::get_string(args, "format");
+    auto it = g_videos.find(handle);
+    if (it == g_videos.end()) throw std::runtime_error("Invalid video handle: " + handle);
+    it->second.target_format = format;
+    return json{{"success", true}};
+}
+
+void merge_impl(const std::string& path1, const std::string& path2, const std::string& output_path) {
+    std::vector<AVFormatContext*> in_fmt_ctxs(2, nullptr);
+    if (avformat_open_input(&in_fmt_ctxs[0], path1.c_str(), nullptr, nullptr) < 0 ||
+        avformat_open_input(&in_fmt_ctxs[1], path2.c_str(), nullptr, nullptr) < 0) {
+        for (auto* c : in_fmt_ctxs) if (c) avformat_close_input(&c);
+        throw std::runtime_error("Could not open input files for merge");
+    }
+    for (auto* c : in_fmt_ctxs) {
+        if (avformat_find_stream_info(c, nullptr) < 0) {
+            for (auto* c2 : in_fmt_ctxs) avformat_close_input(&c2);
+            throw std::runtime_error("Could not find stream info for merge");
+        }
+    }
+    
     AVFormatContext* out_fmt_ctx = nullptr;
     avformat_alloc_output_context2(&out_fmt_ctx, nullptr, nullptr, output_path.c_str());
-    if (!out_fmt_ctx) throw std::runtime_error("Could not allocate output context");
-    
-    std::vector<AVFormatContext*> in_fmt_ctxs;
-    
-    for (int i = 0; i < 2; i++) {
-        AVFormatContext* in_ctx = nullptr;
-        if (avformat_open_input(&in_ctx, inputs[i].c_str(), nullptr, nullptr) < 0) {
-            for (auto* c : in_fmt_ctxs) avformat_close_input(&c);
-            avformat_free_context(out_fmt_ctx);
-            throw std::runtime_error("Could not open input: " + inputs[i]);
-        }
-        if (avformat_find_stream_info(in_ctx, nullptr) < 0) {
-            avformat_close_input(&in_ctx);
-            for (auto* c : in_fmt_ctxs) avformat_close_input(&c);
-            avformat_free_context(out_fmt_ctx);
-            throw std::runtime_error("Could not find stream info for: " + inputs[i]);
-        }
-        in_fmt_ctxs.push_back(in_ctx);
+    if (!out_fmt_ctx) {
+        for (auto* c : in_fmt_ctxs) avformat_close_input(&c);
+        throw std::runtime_error("Could not allocate output context for merge");
     }
     
     int out_video_stream_idx = -1;
     int out_audio_stream_idx = -1;
-    
     for (unsigned int i = 0; i < in_fmt_ctxs[0]->nb_streams; i++) {
-        auto* in_stream = in_fmt_ctxs[0]->streams[i];
-        if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && out_video_stream_idx == -1) {
-            auto* out_stream = avformat_new_stream(out_fmt_ctx, nullptr);
-            avcodec_parameters_copy(out_stream->codecpar, in_stream->codecpar);
+        auto* in_st = in_fmt_ctxs[0]->streams[i];
+        if (in_st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && out_video_stream_idx == -1) {
+            AVStream* out_stream = avformat_new_stream(out_fmt_ctx, nullptr);
+            avcodec_parameters_copy(out_stream->codecpar, in_st->codecpar);
             out_stream->codecpar->codec_tag = 0;
             out_video_stream_idx = out_stream->index;
-        } else if (in_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO && out_audio_stream_idx == -1) {
-            auto* out_stream = avformat_new_stream(out_fmt_ctx, nullptr);
-            avcodec_parameters_copy(out_stream->codecpar, in_stream->codecpar);
+        } else if (in_st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO && out_audio_stream_idx == -1) {
+            AVStream* out_stream = avformat_new_stream(out_fmt_ctx, nullptr);
+            avcodec_parameters_copy(out_stream->codecpar, in_st->codecpar);
             out_stream->codecpar->codec_tag = 0;
             out_audio_stream_idx = out_stream->index;
         }
@@ -667,7 +872,7 @@ void merge_impl(const std::string& first_path, const std::string& second_path, c
     avformat_free_context(out_fmt_ctx);
 }
 
-// 9. save(handle, outputPath)
+// 21. save(handle, outputPath)
 json save(const void_sdk::ArgsMap& args) {
     std::string handle = void_sdk::get_string(args, "handle");
     std::string output_path = void_sdk::get_string(args, "outputPath");
@@ -687,7 +892,85 @@ json save(const void_sdk::ArgsMap& args) {
         return json{{"success", true}};
     }
     
-    // Otherwise, perform the full crop/resize/trim transcode pipeline
+    // Check if streamCopy mode is requested
+    if (state.stream_copy) {
+        AVFormatContext* in_fmt_ctx = nullptr;
+        if (avformat_open_input(&in_fmt_ctx, state.path.c_str(), nullptr, nullptr) < 0) {
+            throw std::runtime_error("Could not open input file: " + state.path);
+        }
+        if (avformat_find_stream_info(in_fmt_ctx, nullptr) < 0) {
+            avformat_close_input(&in_fmt_ctx);
+            throw std::runtime_error("Could not find stream info");
+        }
+        
+        AVFormatContext* out_fmt_ctx = nullptr;
+        const char* fmt_name = (!state.target_format.empty()) ? state.target_format.c_str() : nullptr;
+        avformat_alloc_output_context2(&out_fmt_ctx, nullptr, fmt_name, output_path.c_str());
+        if (!out_fmt_ctx) {
+            avformat_close_input(&in_fmt_ctx);
+            throw std::runtime_error("Could not allocate output context for streamCopy");
+        }
+        
+        std::map<int, int> stream_map;
+        for (unsigned int i = 0; i < in_fmt_ctx->nb_streams; i++) {
+            AVStream* in_st = in_fmt_ctx->streams[i];
+            if (in_st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO || in_st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+                AVStream* out_st = avformat_new_stream(out_fmt_ctx, nullptr);
+                if (!out_st) continue;
+                avcodec_parameters_copy(out_st->codecpar, in_st->codecpar);
+                out_st->codecpar->codec_tag = 0;
+                stream_map[i] = out_st->index;
+            }
+        }
+        
+        for (const auto& [k, v] : state.metadata) {
+            av_dict_set(&out_fmt_ctx->metadata, k.c_str(), v.c_str(), 0);
+        }
+        
+        if (!(out_fmt_ctx->oformat->flags & AVFMT_NOFILE)) {
+            if (avio_open(&out_fmt_ctx->pb, output_path.c_str(), AVIO_FLAG_WRITE) < 0) {
+                avformat_close_input(&in_fmt_ctx);
+                avformat_free_context(out_fmt_ctx);
+                throw std::runtime_error("Could not open output file: " + output_path);
+            }
+        }
+        
+        if (avformat_write_header(out_fmt_ctx, nullptr) < 0) {
+            avformat_close_input(&in_fmt_ctx);
+            if (out_fmt_ctx->pb) avio_closep(&out_fmt_ctx->pb);
+            avformat_free_context(out_fmt_ctx);
+            throw std::runtime_error("Could not write header");
+        }
+        
+        AVPacket* pkt = av_packet_alloc();
+        while (av_read_frame(in_fmt_ctx, pkt) >= 0) {
+            if (stream_map.count(pkt->stream_index) > 0) {
+                int out_idx = stream_map[pkt->stream_index];
+                AVStream* in_st = in_fmt_ctx->streams[pkt->stream_index];
+                AVStream* out_st = out_fmt_ctx->streams[out_idx];
+                
+                pkt->pts = av_rescale_q_rnd(pkt->pts, in_st->time_base, out_st->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
+                pkt->dts = av_rescale_q_rnd(pkt->dts, in_st->time_base, out_st->time_base, (AVRounding)(AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX));
+                pkt->duration = av_rescale_q(pkt->duration, in_st->time_base, out_st->time_base);
+                pkt->pos = -1;
+                pkt->stream_index = out_idx;
+                
+                av_interleaved_write_frame(out_fmt_ctx, pkt);
+            }
+            av_packet_unref(pkt);
+        }
+        
+        av_write_trailer(out_fmt_ctx);
+        av_packet_free(&pkt);
+        avformat_close_input(&in_fmt_ctx);
+        if (out_fmt_ctx->pb) avio_closep(&out_fmt_ctx->pb);
+        avformat_free_context(out_fmt_ctx);
+        
+        g_videos.erase(it);
+        return json{{"success", true}};
+    }
+    
+    // Transcode pipeline
     AVFormatContext* in_fmt_ctx = nullptr;
     if (avformat_open_input(&in_fmt_ctx, state.path.c_str(), nullptr, nullptr) < 0) {
         throw std::runtime_error("Could not open input file: " + state.path);
@@ -727,17 +1010,38 @@ json save(const void_sdk::ArgsMap& args) {
     }
     
     AVFormatContext* out_fmt_ctx = nullptr;
-    avformat_alloc_output_context2(&out_fmt_ctx, nullptr, nullptr, output_path.c_str());
+    const char* target_fmt = (!state.target_format.empty()) ? state.target_format.c_str() : nullptr;
+    avformat_alloc_output_context2(&out_fmt_ctx, nullptr, target_fmt, output_path.c_str());
     if (!out_fmt_ctx) {
         avcodec_free_context(&dec_ctx);
         avformat_close_input(&in_fmt_ctx);
         throw std::runtime_error("Could not allocate output context");
     }
     
+    // Set metadata tags
+    for (const auto& [k, v] : state.metadata) {
+        av_dict_set(&out_fmt_ctx->metadata, k.c_str(), v.c_str(), 0);
+    }
+    
     int out_width = state.has_resize ? state.resize_w : (state.has_crop ? state.crop_w : dec_ctx->width);
     int out_height = state.has_resize ? state.resize_h : (state.has_crop ? state.crop_h : dec_ctx->height);
     
-    const AVCodec* encoder = avcodec_find_encoder(AV_CODEC_ID_MPEG4);
+    const AVCodec* encoder = nullptr;
+    if (!state.video_codec.empty()) {
+        encoder = avcodec_find_encoder_by_name(state.video_codec.c_str());
+        if (!encoder) {
+            if (state.video_codec == "libx264" || state.video_codec == "h264") {
+                encoder = avcodec_find_encoder(AV_CODEC_ID_H264);
+            } else if (state.video_codec == "mpeg4") {
+                encoder = avcodec_find_encoder(AV_CODEC_ID_MPEG4);
+            } else if (state.video_codec == "mjpeg") {
+                encoder = avcodec_find_encoder(AV_CODEC_ID_MJPEG);
+            }
+        }
+    }
+    if (!encoder) {
+        encoder = avcodec_find_encoder(AV_CODEC_ID_MPEG4);
+    }
     if (!encoder) {
         encoder = avcodec_find_encoder(AV_CODEC_ID_MJPEG);
     }
@@ -752,16 +1056,30 @@ json save(const void_sdk::ArgsMap& args) {
     AVCodecContext* enc_ctx = avcodec_alloc_context3(encoder);
     enc_ctx->width = out_width;
     enc_ctx->height = out_height;
-    enc_ctx->pix_fmt = AV_PIX_FMT_YUV420P;
+    
+    AVPixelFormat pix_fmt = AV_PIX_FMT_YUV420P;
+    if (!state.pixel_format.empty()) {
+        AVPixelFormat p = av_get_pix_fmt(state.pixel_format.c_str());
+        if (p != AV_PIX_FMT_NONE) pix_fmt = p;
+    }
+    enc_ctx->pix_fmt = pix_fmt;
     enc_ctx->gop_size = 12;
     enc_ctx->max_b_frames = 0;
     
-    enc_ctx->framerate = av_guess_frame_rate(in_fmt_ctx, in_stream, nullptr);
-    if (enc_ctx->framerate.num == 0 || enc_ctx->framerate.den == 0) {
-        enc_ctx->framerate = {25, 1};
+    if (state.frame_rate > 0.0) {
+        enc_ctx->framerate = av_d2q(state.frame_rate, 100000);
+    } else {
+        enc_ctx->framerate = av_guess_frame_rate(in_fmt_ctx, in_stream, nullptr);
+        if (enc_ctx->framerate.num == 0 || enc_ctx->framerate.den == 0) {
+            enc_ctx->framerate = {25, 1};
+        }
     }
     enc_ctx->time_base = av_inv_q(enc_ctx->framerate);
-    enc_ctx->bit_rate = 2000000;
+    enc_ctx->bit_rate = (state.video_bitrate > 0) ? state.video_bitrate : 2000000;
+    
+    if (!state.preset.empty()) {
+        av_opt_set(enc_ctx->priv_data, "preset", state.preset.c_str(), 0);
+    }
     
     if (out_fmt_ctx->oformat->flags & AVFMT_GLOBALHEADER) {
         enc_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
@@ -788,6 +1106,12 @@ json save(const void_sdk::ArgsMap& args) {
         AVStream* out_audio = avformat_new_stream(out_fmt_ctx, nullptr);
         if (out_audio) {
             avcodec_parameters_copy(out_audio->codecpar, in_audio->codecpar);
+            if (state.audio_bitrate > 0) {
+                out_audio->codecpar->bit_rate = state.audio_bitrate;
+            }
+            if (state.sample_rate > 0) {
+                out_audio->codecpar->sample_rate = state.sample_rate;
+            }
             out_audio->codecpar->codec_tag = 0;
             out_audio_stream_idx = out_audio->index;
             out_audio->time_base = in_audio->time_base;
@@ -814,12 +1138,6 @@ json save(const void_sdk::ArgsMap& args) {
     }
     
     AVFrame* frame = av_frame_alloc();
-    AVFrame* out_frame = av_frame_alloc();
-    out_frame->width = out_width;
-    out_frame->height = out_height;
-    out_frame->format = enc_ctx->pix_fmt;
-    av_frame_get_buffer(out_frame, 0);
-    
     AVPacket* in_pkt = av_packet_alloc();
     AVPacket* out_pkt = av_packet_alloc();
     
@@ -949,7 +1267,6 @@ json save(const void_sdk::ArgsMap& args) {
     
     if (sws_ctx) sws_freeContext(sws_ctx);
     av_frame_free(&frame);
-    av_frame_free(&out_frame);
     av_packet_free(&in_pkt);
     av_packet_free(&out_pkt);
     avcodec_free_context(&enc_ctx);
@@ -975,6 +1292,19 @@ void init_handlers() {
     void_sdk::register_handler("convert", convert);
     void_sdk::register_handler("thumbnail", thumbnail);
     void_sdk::register_handler("save", save);
+    
+    void_sdk::register_handler("videoCodec", videoCodec);
+    void_sdk::register_handler("audioCodec", audioCodec);
+    void_sdk::register_handler("pixelFormat", pixelFormat);
+    void_sdk::register_handler("preset", preset);
+    void_sdk::register_handler("filter", filter_api);
+    void_sdk::register_handler("videoBitrate", videoBitrate);
+    void_sdk::register_handler("audioBitrate", audioBitrate);
+    void_sdk::register_handler("sampleRate", sampleRate);
+    void_sdk::register_handler("frameRate", frameRate);
+    void_sdk::register_handler("streamCopy", streamCopy);
+    void_sdk::register_handler("metadata", metadata);
+    void_sdk::register_handler("outputFormat", outputFormat);
 }
 
 VOID_PLUGIN(init_handlers);

@@ -8,39 +8,55 @@ A high-performance WebAssembly FFmpeg plugin built with the **Void** framework a
 
 1. **Add the plugin to your Void application project**:
    ```bash
-   npx void add @voidwasm/void-ffmpeg
+   npx void add @voidwasm/ffmpeg
    ```
-2. **Import and use the plugin** in your Javascript/Typescript files:
+2. **Import and use the plugin** in your JavaScript/TypeScript files:
    ```javascript
    import ffmpeg from "@voidwasm/ffmpeg";
    ```
 
 ---
 
-## 📖 API Usage Guide
-
-The plugin exposes a clean, promise-based API with the following methods:
+## 📖 API Reference
 
 ### 1. `open(args: { path: string })`
-Opens a video file and retrieves its metadata (dimensions, duration, and a unique session handle).
+Opens a video file and probes comprehensive stream metadata.
 ```javascript
 const info = await ffmpeg.open({ path: "input.mp4" });
 console.log(info);
-// Output: { handle: "video_1", width: 1920, height: 1080, duration: 5.758 }
+/*
+Output:
+{
+  "handle": "video_1",
+  "duration": 5.758,
+  "width": 1920,
+  "height": 1080,
+  "fps": 29.97,
+  "bitrate": 3956897,
+  "format": "mov,mp4,m4a,3gp,3g2,mj2",
+  "hasVideo": true,
+  "hasAudio": true,
+  "videoCodec": "h264",
+  "audioCodec": "aac",
+  "pixelFormat": "yuv420p",
+  "sampleRate": 44100,
+  "channels": 2
+}
+*/
 ```
 
 ### 2. `thumbnail(args: { handle: string; time: number; outputPath: string })`
-Extracts a frame at a specific timestamp and saves it as a JPEG image.
+Extracts a video frame at a given time timestamp (in seconds) and outputs a JPEG image.
 ```javascript
 await ffmpeg.thumbnail({
   handle: info.handle,
-  time: 2.5, // Extract frame at t = 2.5 seconds
+  time: 2.5,
   outputPath: "thumbnail.jpg"
 });
 ```
 
 ### 3. `extractAudio(args: { handle: string; outputPath: string })`
-Extracts the audio track from the video and saves it to the output path (supports copy encoding).
+Isolates and extracts the audio stream into a standalone file.
 ```javascript
 await ffmpeg.extractAudio({
   handle: info.handle,
@@ -49,7 +65,7 @@ await ffmpeg.extractAudio({
 ```
 
 ### 4. `merge(args: { handle: string; otherPath: string })`
-Queues a second video file to be merged/concatenated sequentially. Call `save()` afterwards to perform the action.
+Queues a second video file to be merged sequentially. Call `save()` afterwards to perform the operation.
 ```javascript
 await ffmpeg.merge({
   handle: info.handle,
@@ -62,47 +78,108 @@ await ffmpeg.save({
 ```
 
 ### 5. `resize(args: { handle: string; width: number; height: number })`
-Queues a resolution change. Call `save()` afterwards to transcode.
+Queues a target resolution change.
 ```javascript
 await ffmpeg.resize({ handle: info.handle, width: 640, height: 480 });
 ```
 
 ### 6. `crop(args: { handle: string; x: number; y: number; width: number; height: number })`
-Queues a cropping transformation. Call `save()` afterwards to transcode.
+Queues a rectangular crop area.
 ```javascript
-await ffmpeg.crop({
-  handle: info.handle,
-  x: 100,
-  y: 100,
-  width: 400,
-  height: 300
-});
+await ffmpeg.crop({ handle: info.handle, x: 100, y: 100, width: 400, height: 300 });
 ```
 
 ### 7. `trim(args: { handle: string; start: number; end: number })`
-Queues a duration trim. Call `save()` afterwards to transcode.
+Queues a duration trim range (in seconds).
 ```javascript
-await ffmpeg.trim({
-  handle: info.handle,
-  start: 1.5, // Start at 1.5s
-  end: 4.5    // End at 4.5s
-});
+await ffmpeg.trim({ handle: info.handle, start: 1.5, end: 4.5 });
 ```
 
 ### 8. `convert(args: { handle: string; format: string })`
-Queues a container format conversion. Call `save()` afterwards to transcode.
+Queues a target container format.
 ```javascript
 await ffmpeg.convert({ handle: info.handle, format: "mp4" });
 ```
 
-### 9. `save(args: { handle: string; outputPath: string })`
-Executes all queued transformations (resize, crop, trim, convert, merge) via a transcoder pipeline and saves the result.
+### 9. `outputFormat(args: { handle: string; format: string })`
+Sets the explicit output container / format (alias/enhancement for `convert`).
 ```javascript
-// Example: Resize, crop, trim, and transcode to output.mp4
-await ffmpeg.resize({ handle: info.handle, width: 320, height: 240 });
-await ffmpeg.crop({ handle: info.handle, x: 0, y: 0, width: 200, height: 200 });
-await ffmpeg.trim({ handle: info.handle, start: 1.0, end: 3.0 });
+await ffmpeg.outputFormat({ handle: info.handle, format: "mp4" });
+```
 
+### 10. `videoCodec(args: { handle: string; codec: string })`
+Specifies the target video encoder codec (e.g. `"libx264"`, `"mpeg4"`, `"mjpeg"`).
+```javascript
+await ffmpeg.videoCodec({ handle: info.handle, codec: "mpeg4" });
+```
+
+### 11. `audioCodec(args: { handle: string; codec: string })`
+Specifies the target audio encoder codec (e.g. `"aac"`, `"mp3"`).
+```javascript
+await ffmpeg.audioCodec({ handle: info.handle, codec: "aac" });
+```
+
+### 12. `pixelFormat(args: { handle: string; format: string })`
+Specifies the pixel format (e.g. `"yuv420p"`, `"yuvj420p"`).
+```javascript
+await ffmpeg.pixelFormat({ handle: info.handle, format: "yuv420p" });
+```
+
+### 13. `preset(args: { handle: string; preset: string })`
+Configures encoding preset speed/quality tradeoff (e.g. `"slow"`, `"fast"`, `"ultrafast"`).
+```javascript
+await ffmpeg.preset({ handle: info.handle, preset: "slow" });
+```
+
+### 14. `filter(args: { handle: string; graph: string })`
+Applies custom FFmpeg video filter graph expressions.
+```javascript
+await ffmpeg.filter({ handle: info.handle, graph: "scale=1280:-2,crop=500:500" });
+```
+
+### 15. `videoBitrate(args: { handle: string; bitrate: string | number })`
+Configures target video bitrate (accepts `"5M"`, `"2000k"`, or raw number `2000000`).
+```javascript
+await ffmpeg.videoBitrate({ handle: info.handle, bitrate: "5M" });
+```
+
+### 16. `audioBitrate(args: { handle: string; bitrate: string | number })`
+Configures target audio bitrate (accepts `"192k"` or raw number `192000`).
+```javascript
+await ffmpeg.audioBitrate({ handle: info.handle, bitrate: "192k" });
+```
+
+### 17. `sampleRate(args: { handle: string; rate: number })`
+Sets audio sample rate in Hz (e.g. `48000`).
+```javascript
+await ffmpeg.sampleRate({ handle: info.handle, rate: 48000 });
+```
+
+### 18. `frameRate(args: { handle: string; fps: number })`
+Sets target video framerate (e.g. `60`).
+```javascript
+await ffmpeg.frameRate({ handle: info.handle, fps: 60 });
+```
+
+### 19. `streamCopy(args: { handle: string })`
+Enables fast stream copy / remuxing without re-encoding video/audio streams.
+```javascript
+await ffmpeg.streamCopy({ handle: info.handle });
+```
+
+### 20. `metadata(args: { handle: string; [key: string]: any })`
+Sets container metadata tags (title, author, artist, comment, etc.).
+```javascript
+await ffmpeg.metadata({
+  handle: info.handle,
+  title: "Movie Title",
+  author: "Soham"
+});
+```
+
+### 21. `save(args: { handle: string; outputPath: string })`
+Executes all queued transformations and saves the output file.
+```javascript
 await ffmpeg.save({
   handle: info.handle,
   outputPath: "output.mp4"
@@ -113,18 +190,16 @@ await ffmpeg.save({
 
 ## 🛠 Development & Compiling
 
-To make changes to the C++ core or rebuild the plugin:
-
 1. **Install SDK dependencies**:
    ```bash
    npm install
    npm run cpp-init
    ```
-2. **Build/Compile to WASM**:
+2. **Build WebAssembly Plugin**:
    ```bash
    npx void build
    ```
-3. **Link/Install local build for testing**:
+3. **Link and Test**:
    ```bash
    cd test
    void add ../
