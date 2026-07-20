@@ -11,16 +11,21 @@ set(CMAKE_EXECUTABLE_SUFFIX ".wasm")
 if (EMSCRIPTEN)
   set(EXPORT_FUNCTIONS "-sEXPORTED_FUNCTIONS=_void_malloc,_void_free,_void_free_string,_void_invoke,_void_init")
   set(EXPORT_METHODS "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap")
+  add_compile_options("-sSTANDALONE_WASM=1")
+  add_compile_options("-fwasm-exceptions")
   add_link_options(
     "${EXPORT_FUNCTIONS}"
     "${EXPORT_METHODS}"
     "--no-entry"
     "-sALLOW_MEMORY_GROWTH=1"
+    "-sSTANDALONE_WASM=1"
+    "-sERROR_ON_UNDEFINED_SYMBOLS=0"
+    "-fwasm-exceptions"
   )
 endif()
 
 # Reference Void C++ SDK
-add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/node_modules/@tgrv/void-sdk-cpp" void-sdk-cpp-build)
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/node_modules/@voidwasm/sdk-cpp" sdk-cpp-build)
 
 add_executable(void-ffmpeg src/plugin.cpp)
 
