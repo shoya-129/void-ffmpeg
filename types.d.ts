@@ -1,4 +1,4 @@
-declare module 'ffmpeg' {
+declare module "@voidwasm/ffmpeg" {
   export interface VideoInfo {
     handle: string;
     duration: number;
