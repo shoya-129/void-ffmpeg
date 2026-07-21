@@ -116,6 +116,7 @@ struct VideoState {
     int sample_rate = 0;
     double frame_rate = 0.0;
     bool stream_copy = false;
+    int threads = 0;
     std::map<std::string, std::string> metadata;
 };
 
@@ -718,6 +719,21 @@ json outputFormat(const void_sdk::ArgsMap& args) {
     return json{{"success", true}};
 }
 
+// 22. threads(handle, count/threads)
+json threads_api(const void_sdk::ArgsMap& args) {
+    std::string handle = void_sdk::get_string(args, "handle");
+    int count = 0;
+    if (args.count("count") > 0) {
+        count = (int)void_sdk::get_int(args, "count");
+    } else if (args.count("threads") > 0) {
+        count = (int)void_sdk::get_int(args, "threads");
+    }
+    auto it = g_videos.find(handle);
+    if (it == g_videos.end()) throw std::runtime_error("Invalid video handle: " + handle);
+    it->second.threads = count;
+    return json{{"success", true}};
+}
+
 void merge_impl(const std::string& path1, const std::string& path2, const std::string& output_path) {
     std::vector<AVFormatContext*> in_fmt_ctxs(2, nullptr);
     if (avformat_open_input(&in_fmt_ctxs[0], path1.c_str(), nullptr, nullptr) < 0 ||
@@ -1003,6 +1019,10 @@ json save(const void_sdk::ArgsMap& args) {
     AVCodecContext* dec_ctx = avcodec_alloc_context3(decoder);
     avcodec_parameters_to_context(dec_ctx, in_stream->codecpar);
     dec_ctx->pkt_timebase = in_stream->time_base;
+    dec_ctx->thread_count = state.threads;
+    if (state.threads != 1) {
+        dec_ctx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
+    }
     if (avcodec_open2(dec_ctx, decoder, nullptr) < 0) {
         avcodec_free_context(&dec_ctx);
         avformat_close_input(&in_fmt_ctx);
@@ -1086,6 +1106,10 @@ json save(const void_sdk::ArgsMap& args) {
     }
     
     enc_ctx->strict_std_compliance = FF_COMPLIANCE_UNOFFICIAL;
+    enc_ctx->thread_count = state.threads;
+    if (state.threads != 1) {
+        enc_ctx->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
+    }
     if (avcodec_open2(enc_ctx, encoder, nullptr) < 0) {
         avcodec_free_context(&enc_ctx);
         avcodec_free_context(&dec_ctx);
@@ -1305,6 +1329,7 @@ void init_handlers() {
     void_sdk::register_handler("streamCopy", streamCopy);
     void_sdk::register_handler("metadata", metadata);
     void_sdk::register_handler("outputFormat", outputFormat);
+    void_sdk::register_handler("threads", threads_api);
 }
 
 VOID_PLUGIN(init_handlers);

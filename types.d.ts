@@ -45,6 +45,7 @@ declare module 'ffmpeg' {
     streamCopy(args: { handle: string }): Promise<SuccessResult>;
     metadata(args: { handle: string; [key: string]: any }): Promise<SuccessResult>;
     outputFormat(args: { handle: string; format: string }): Promise<SuccessResult>;
+    threads(args: { handle: string; count: number }): Promise<SuccessResult>;
   }
 
   const ffmpeg: Ffmpeg;

@@ -1,7 +1,7 @@
 {
   "name": "@voidwasm/ffmpeg",
   "description": "A high-performance WebAssembly FFmpeg plugin built with the Void framework and executed via @voidwasm/runtime inside Node.js (functioning seamlessly as a Void plugin, just like Vite and Vite plugins). It enables native, cross-platform media processing—such as video resizing, cropping, trimming, video concatenation/merging, thumbnail extraction, and audio isolation—directly in JavaScript through a synchronous host filesystem bridge.",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "cpp",
   "buildDir": "@void/ffmpeg",
   "types": "types.d.ts",

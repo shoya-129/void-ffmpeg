@@ -2,6 +2,6 @@
   "registry": "./registry",
   "plugins": {
     "@tgrv/void-math": "^1.0.7",
-    "@voidwasm/ffmpeg": "^1.0.1"
+    "@voidwasm/ffmpeg": "^1.0.2"
   }
 }

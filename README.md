@@ -45,7 +45,13 @@ Output:
 */
 ```
 
-### 2. `thumbnail(args: { handle: string; time: number; outputPath: string })`
+### 2. `threads(args: { handle: string; count: number })`
+Configures decoder and encoder thread count (`count: 0` for auto-detect based on CPU cores, `count: 1` for single-thread, `count: N` for N threads).
+```javascript
+await ffmpeg.threads({ handle: info.handle, count: 0 }); // Auto-detect CPU cores
+```
+
+### 3. `thumbnail(args: { handle: string; time: number; outputPath: string })`
 Extracts a video frame at a given time timestamp (in seconds) and outputs a JPEG image.
 ```javascript
 await ffmpeg.thumbnail({
@@ -55,7 +61,7 @@ await ffmpeg.thumbnail({
 });
 ```
 
-### 3. `extractAudio(args: { handle: string; outputPath: string })`
+### 4. `extractAudio(args: { handle: string; outputPath: string })`
 Isolates and extracts the audio stream into a standalone file.
 ```javascript
 await ffmpeg.extractAudio({
@@ -64,7 +70,7 @@ await ffmpeg.extractAudio({
 });
 ```
 
-### 4. `merge(args: { handle: string; otherPath: string })`
+### 5. `merge(args: { handle: string; otherPath: string })`
 Queues a second video file to be merged sequentially. Call `save()` afterwards to perform the operation.
 ```javascript
 await ffmpeg.merge({
@@ -77,97 +83,97 @@ await ffmpeg.save({
 });
 ```
 
-### 5. `resize(args: { handle: string; width: number; height: number })`
+### 6. `resize(args: { handle: string; width: number; height: number })`
 Queues a target resolution change.
 ```javascript
 await ffmpeg.resize({ handle: info.handle, width: 640, height: 480 });
 ```
 
-### 6. `crop(args: { handle: string; x: number; y: number; width: number; height: number })`
+### 7. `crop(args: { handle: string; x: number; y: number; width: number; height: number })`
 Queues a rectangular crop area.
 ```javascript
 await ffmpeg.crop({ handle: info.handle, x: 100, y: 100, width: 400, height: 300 });
 ```
 
-### 7. `trim(args: { handle: string; start: number; end: number })`
+### 8. `trim(args: { handle: string; start: number; end: number })`
 Queues a duration trim range (in seconds).
 ```javascript
 await ffmpeg.trim({ handle: info.handle, start: 1.5, end: 4.5 });
 ```
 
-### 8. `convert(args: { handle: string; format: string })`
+### 9. `convert(args: { handle: string; format: string })`
 Queues a target container format.
 ```javascript
 await ffmpeg.convert({ handle: info.handle, format: "mp4" });
 ```
 
-### 9. `outputFormat(args: { handle: string; format: string })`
-Sets the explicit output container / format (alias/enhancement for `convert`).
+### 10. `outputFormat(args: { handle: string; format: string })`
+Sets the explicit output container / format.
 ```javascript
 await ffmpeg.outputFormat({ handle: info.handle, format: "mp4" });
 ```
 
-### 10. `videoCodec(args: { handle: string; codec: string })`
-Specifies the target video encoder codec (e.g. `"libx264"`, `"mpeg4"`, `"mjpeg"`).
+### 11. `videoCodec(args: { handle: string; codec: string })`
+Specifies the target video encoder codec (e.g. `"mpeg4"`, `"mjpeg"`).
 ```javascript
 await ffmpeg.videoCodec({ handle: info.handle, codec: "mpeg4" });
 ```
 
-### 11. `audioCodec(args: { handle: string; codec: string })`
+### 12. `audioCodec(args: { handle: string; codec: string })`
 Specifies the target audio encoder codec (e.g. `"aac"`, `"mp3"`).
 ```javascript
 await ffmpeg.audioCodec({ handle: info.handle, codec: "aac" });
 ```
 
-### 12. `pixelFormat(args: { handle: string; format: string })`
+### 13. `pixelFormat(args: { handle: string; format: string })`
 Specifies the pixel format (e.g. `"yuv420p"`, `"yuvj420p"`).
 ```javascript
 await ffmpeg.pixelFormat({ handle: info.handle, format: "yuv420p" });
 ```
 
-### 13. `preset(args: { handle: string; preset: string })`
+### 14. `preset(args: { handle: string; preset: string })`
 Configures encoding preset speed/quality tradeoff (e.g. `"slow"`, `"fast"`, `"ultrafast"`).
 ```javascript
 await ffmpeg.preset({ handle: info.handle, preset: "slow" });
 ```
 
-### 14. `filter(args: { handle: string; graph: string })`
+### 15. `filter(args: { handle: string; graph: string })`
 Applies custom FFmpeg video filter graph expressions.
 ```javascript
 await ffmpeg.filter({ handle: info.handle, graph: "scale=1280:-2,crop=500:500" });
 ```
 
-### 15. `videoBitrate(args: { handle: string; bitrate: string | number })`
+### 16. `videoBitrate(args: { handle: string; bitrate: string | number })`
 Configures target video bitrate (accepts `"5M"`, `"2000k"`, or raw number `2000000`).
 ```javascript
 await ffmpeg.videoBitrate({ handle: info.handle, bitrate: "5M" });
 ```
 
-### 16. `audioBitrate(args: { handle: string; bitrate: string | number })`
+### 17. `audioBitrate(args: { handle: string; bitrate: string | number })`
 Configures target audio bitrate (accepts `"192k"` or raw number `192000`).
 ```javascript
 await ffmpeg.audioBitrate({ handle: info.handle, bitrate: "192k" });
 ```
 
-### 17. `sampleRate(args: { handle: string; rate: number })`
+### 18. `sampleRate(args: { handle: string; rate: number })`
 Sets audio sample rate in Hz (e.g. `48000`).
 ```javascript
 await ffmpeg.sampleRate({ handle: info.handle, rate: 48000 });
 ```
 
-### 18. `frameRate(args: { handle: string; fps: number })`
+### 19. `frameRate(args: { handle: string; fps: number })`
 Sets target video framerate (e.g. `60`).
 ```javascript
 await ffmpeg.frameRate({ handle: info.handle, fps: 60 });
 ```
 
-### 19. `streamCopy(args: { handle: string })`
+### 20. `streamCopy(args: { handle: string })`
 Enables fast stream copy / remuxing without re-encoding video/audio streams.
 ```javascript
 await ffmpeg.streamCopy({ handle: info.handle });
 ```
 
-### 20. `metadata(args: { handle: string; [key: string]: any })`
+### 21. `metadata(args: { handle: string; [key: string]: any })`
 Sets container metadata tags (title, author, artist, comment, etc.).
 ```javascript
 await ffmpeg.metadata({
@@ -177,7 +183,7 @@ await ffmpeg.metadata({
 });
 ```
 
-### 21. `save(args: { handle: string; outputPath: string })`
+### 22. `save(args: { handle: string; outputPath: string })`
 Executes all queued transformations and saves the output file.
 ```javascript
 await ffmpeg.save({
